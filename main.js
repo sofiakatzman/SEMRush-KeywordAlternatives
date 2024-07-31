@@ -1,4 +1,5 @@
 // config
+const SEMRUSH_API_KEY = "a64db1a0f844a43e84e6eaf430d835c3";
 const SEMRUSH_API_URL = "https://api.semrush.com/";
 
 // fetch the latest added record from the 'Keywords' table
@@ -71,31 +72,99 @@ for (let record of recordsToProcess) {
         "Keyword CPC": 0,
         Status: { id: "selGPLzxnmZ5gd9hl" }, // keyword error status
       });
-    }
+    } else {
+      // Create new records from SEMRush Data
+      for (let row of rows) {
+        if (row.trim()) {
+          let columns = row.split(";");
+          let keyword = columns[keywordIndex];
+          let volume = parseInt(columns[volumeIndex]);
+          let cpc = parseInt(columns[cpcIndex]);
 
-    // Create new records from SEMRush Data
-    for (let row of rows) {
-      if (row.trim()) {
-        let columns = row.split(";");
-        let keyword = columns[keywordIndex];
-        let volume = parseInt(columns[volumeIndex]);
-        let cpc = parseInt(columns[cpcIndex]);
+          // Create a new record in AirTable
+          await table.createRecordAsync({
+            "Blog Posts": blogPost,
+            Keyword: keyword,
+            "Keyword Volume": volume,
+            "Keyword CPC": cpc,
+            Status: { name: "Ready To Review" },
+            "Keyword Level": { name: "Secondary" },
+          });
+        }
+      }
+      output.text("Records created successfully.");
+      // fetch for keyword data
 
-        // Create a new record in AirTable
-        await table.createRecordAsync({
-          "Blog Posts": blogPost,
-          Keyword: keyword,
-          "Keyword Volume": volume,
-          "Keyword CPC": cpc,
-          Status: { name: "Ready To Review" },
-          "Keyword Level": { name: "Secondary" },
+      // Construct the SEMrush API request URL
+      let urlseed = `${SEMRUSH_API_URL}?type=phrase_this&key=${encodeURIComponent(
+        SEMRUSH_API_KEY
+      )}&phrase=${encodeURIComponent(
+        keyword
+      )}&export_columns=Ph,Nq,Cp,Co,Nr,Td&database=us`;
+
+      try {
+        output.text(`Fetching data from URL: ${urlseed}`);
+
+        // Use remoteFetchAsync to make the request
+        let response = await remoteFetchAsync(urlseed, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+        });
+
+        if (!response.ok)
+          throw new Error(
+            `HTTP error! Status: ${response.status} - ${response.statusText}`
+          );
+
+        let data = await response.text(); // SEMrush API returns data as text
+        console.log(data);
+
+        // Split text by lines
+        let seedLines = data.split("\n");
+
+        // Get headers and data rows
+        let seedHeaders = seedLines[0].split(";");
+        let seedRows = seedLines.slice(1);
+
+        // Get indices of the columns we need
+        let seedVolumeIndex = seedHeaders.indexOf("Search Volume");
+        let seedCpcIndex = seedHeaders.indexOf("CPC");
+
+        // Check if expected columns are found
+        if (seedVolumeIndex === -1 || seedCpcIndex === -1) {
+          output.text("Error: Expected columns not found in seed response.");
+        } else {
+          // Extract data from the first row (assuming it has the relevant data)
+          let seedColumns = seedRows[0].split(";");
+          let seedVolume = parseInt(seedColumns[seedVolumeIndex]);
+          let seedCpc = parseFloat(seedColumns[seedCpcIndex]);
+
+          // Update original record and change status to ready to review
+          await table.updateRecordAsync(recordId, {
+            "Keyword Volume": seedVolume,
+            "Keyword CPC": seedCpc,
+            Status: { id: "sels5yDurIsoRiO6n" }, // keyword ready to review status
+          });
+
+          output.text(
+            "Original record updated successfully with keyword volume and CPC."
+          );
+        }
+      } catch (error) {
+        output.text(
+          `Error fetching data from SEMrush for keyword: ${error.message}`
+        );
+        // update original record and change status to ready to review
+        // tag keyword as keyword error
+        await table.updateRecordAsync(recordId, {
+          "Keyword Volume": 0,
+          "Keyword CPC": 0,
+          Status: { id: "selGPLzxnmZ5gd9hl" },
         });
       }
     }
-    output.text("Records created successfully.");
-    // update original record
-    // fetch for keyword data
-    // change status to ready to review
   } catch (error) {
     output.text(`Error fetching data from SEMrush: ${error.message}`);
   }
